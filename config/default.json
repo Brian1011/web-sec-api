@@ -6,5 +6,9 @@
     "username": "root",
     "password": "root",
     "database": "web-sec"
+  },
+  "africasTalking": {
+    "apiKey": "at_api_key",
+    "username": "at_username"
   }
 }

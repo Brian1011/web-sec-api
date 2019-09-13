@@ -26,6 +26,13 @@ class Session {
       },
       deviceName: {
         type: Sequelize.STRING
+      },
+      activationCode: {
+        type: Sequelize.STRING
+      },
+      activated: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
       }
     });
   }
@@ -36,7 +43,8 @@ class Session {
     createdDate,
     lastUseDate,
     deviceId,
-    deviceName
+    deviceName,
+    activationCode
   ) {
     return this.sessionDef.create({
       session,
@@ -44,7 +52,8 @@ class Session {
       createdDate,
       lastUseDate,
       deviceId,
-      deviceName
+      deviceName,
+      activationCode
     });
   }
 
@@ -66,6 +75,10 @@ class Session {
 
   async updateLastDate(session, lastUseDate) {
     return this.sessionDef.update({ lastUseDate }, { where: { session } });
+  }
+
+  async setSessionActivated(session) {
+    return this.sessionDef.update({ activated: true }, { where: { session } });
   }
 
   async delete(session) {

@@ -4,6 +4,9 @@ const crypto = require("crypto");
 const moment = require("moment");
 const db = require("./db");
 const scrypt = require("scrypt");
+const axios = require("axios").default;
+const config = require("config");
+const querystring = require("querystring");
 
 const app = express();
 
@@ -26,6 +29,7 @@ const authMiddleware = async (req, res, next) => {
   }
 
   const dbSession = await db.session.find(reqSession);
+
   if (!dbSession) {
     res.status(403).send({ message: "Invalid Session" });
     return;
@@ -36,8 +40,14 @@ const authMiddleware = async (req, res, next) => {
     return;
   }
 
+  if (!dbSession.activated) {
+    res.status(403).send({ message: "Session not activated." });
+    return;
+  }
+
   await db.session.updateLastDate(reqSession, moment().unix());
 
+  // eslint-disable-next-line require-atomic-updates
   req.userId = dbSession.userId;
 
   next();
@@ -70,54 +80,100 @@ app.post("/register", async (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-  const phone = req.body.phone;
-  const password = req.body.password;
-  const deviceName = req.header("DeviceName");
+  try {
+    const phone = req.body.phone;
+    const password = req.body.password;
+    const deviceName = req.header("DeviceName");
+    const deviceId = req.header("DeviceId");
+
+    // Validate request parameters
+    if (!phone || !password || !deviceName || !deviceId) {
+      res.status(400).send({ message: "Missing parameters" });
+      return;
+    }
+
+    // Verify user exists
+    const userFromDb = await db.user.find(phone);
+    if (!userFromDb) {
+      res.status(404).send({ message: "User does not exist" });
+      return;
+    }
+
+    // Verify password
+    if (
+      !scrypt.verifyKdfSync(Buffer.from(userFromDb.password, "hex"), password)
+    ) {
+      res.status(401).send({ message: "Invalid password" });
+      return;
+    }
+
+    // Create new session
+    const session = generateSession();
+    const sessionExpiry = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365); // 1 year
+    const createdDate = moment().unix();
+    const lastUseDate = moment().unix();
+    const activationCode = getRandomInt(1111, 9999);
+
+    // Send activation code to user's phone
+    await axios.post(
+      "https://api.africastalking.com/version1/messaging",
+      querystring.stringify({
+        username: config.get("africasTalking.username"),
+        to: phone,
+        message: `Your activation code is ${activationCode}`
+      }),
+      {
+        headers: {
+          apiKey: config.get("africasTalking.apiKey"),
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded"
+        }
+      }
+    );
+
+    // Save session
+    await db.session.create(
+      session,
+      userFromDb.id,
+      createdDate,
+      lastUseDate,
+      deviceId,
+      deviceName,
+      activationCode
+    );
+
+    // Send response
+    res.set(
+      "Set-Cookie",
+      `session=${session}; Expires=${sessionExpiry}; HttpOnly `
+    );
+    res.send({ message: `Activation code sent to ${phone}`, session });
+  } catch (error) {
+    console.log(error);
+    res.status(500).send({ message: error.message });
+  }
+});
+
+app.post("/activate", async (req, res) => {
+  const session = req.cookies.session || req.header("session");
   const deviceId = req.header("DeviceId");
+  const deviceName = req.header("DeviceName");
 
-  // Validate request parameters
-  if (!phone || !password || !deviceName || !deviceId) {
-    res.status(400).send({ message: "Missing parameters" });
+  const dbSession = await db.session.find(session);
+
+  if (dbSession.deviceId != deviceId || dbSession.deviceName != deviceName) {
+    res.status(403).send({ message: "Invalid session for current device" });
     return;
   }
 
-  // Verify user exists
-  const userFromDb = await db.user.find(phone);
-  if (!userFromDb) {
-    res.status(404).send({ message: "User does not exist" });
+  if (req.body.activationCode != dbSession.activationCode) {
+    res.status(403).send({ message: "Invalid code" });
     return;
   }
 
-  // Verify password
-  if (
-    !scrypt.verifyKdfSync(Buffer.from(userFromDb.password, "hex"), password)
-  ) {
-    res.status(401).send({ message: "Invalid password" });
-    return;
-  }
+  await db.session.setSessionActivated(session);
 
-  // Create new session
-  const session = generateSession();
-  const sessionExpiry = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365); // 1 year
-  const createdDate = moment().unix();
-  const lastUseDate = moment().unix();
-
-  // Save session
-  await db.session.create(
-    session,
-    userFromDb.id,
-    createdDate,
-    lastUseDate,
-    deviceId,
-    deviceName
-  );
-
-  // Send response
-  res.set(
-    "Set-Cookie",
-    `session=${session}; Expires=${sessionExpiry}; HttpOnly `
-  );
-  res.send({ user: { id: userFromDb.id, phone: userFromDb.phone }, session });
+  res.send({ message: "Session activated" });
 });
 
 app.post("/logout", authMiddleware, async (req, res) => {
@@ -190,6 +246,12 @@ function parseDbError(e) {
     console.log(e.message);
     return { message: e.name };
   }
+}
+
+function getRandomInt(min, max) {
+  min = Math.ceil(min);
+  max = Math.floor(max);
+  return Math.floor(Math.random() * (max - min)) + min;
 }
 
 module.exports = app;
