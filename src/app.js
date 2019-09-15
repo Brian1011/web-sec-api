@@ -7,7 +7,7 @@ const cors = require("cors");
 const router = require("./router");
 const db = require("./db");
 
-const port = config.get("port") || 3000;
+const port = process.argv[2] || config.get("port") || 3000;
 
 const app = express();
 app.use(cors());
