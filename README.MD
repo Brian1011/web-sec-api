@@ -56,7 +56,8 @@ POST /login
 }
 ```
 
-A sesssion is returned in a `Set-Cookie` header and in the body. The session can also be passed in a `session` header.
+A sesssion is returned in a `Set-Cookie` header and in the body.  
+Since a cookie is set, no further action is needed for further authentication. The session can also be passed in a `session` header.
 
 **NOTE:** A session must be activated before it can be used.
 
